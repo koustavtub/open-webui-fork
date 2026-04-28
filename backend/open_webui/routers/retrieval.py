@@ -5,6 +5,8 @@ import os
 import shutil
 import asyncio
 
+import requests
+
 import re
 import uuid
 from datetime import datetime
@@ -1551,6 +1553,56 @@ class ProcessFileForm(BaseModel):
     file_id: str
     content: Optional[str] = None
     collection_name: Optional[str] = None
+    chat_id: Optional[str] = None
+
+
+def _push_to_neo4j_graph_if_configured(
+    request: Request,
+    filename: str,
+    file_hash: str,
+    text_content: str,
+    chat_id: Optional[str],
+):
+    """Optionally POST extracted text to Shakudo Neo4j graph tool (multipart ingest pipeline).
+
+    Controlled by ``NEO4J_GRAPH_INGEST``. Forwards ``Authorization`` from the incoming request
+    so the downstream service can reuse the user's JWT."""
+    ingest_flag = os.environ.get('NEO4J_GRAPH_INGEST', '').lower() not in ('', '0', 'false', 'no')
+    if not ingest_flag:
+        return
+
+    endpoint = os.getenv('SHAKUDO_NEO4J_GRAPH_TOOL_MICROSERVICE')
+    if not endpoint:
+        log.error(
+            'NEO4J_GRAPH_INGEST is enabled but SHAKUDO_NEO4J_GRAPH_TOOL_MICROSERVICE is not set.'
+        )
+        return
+
+    try:
+        timeout_s = float(os.getenv('SHAKUDO_NEO4J_INGEST_TIMEOUT', '120'))
+    except ValueError:
+        timeout_s = 120.0
+
+    payload = {
+        'file_name': filename,
+        'file_hash': file_hash or '',
+        'content': str(text_content),
+        'chat_id': chat_id or '',
+    }
+
+    headers = {'Content-Type': 'application/json'}
+    auth_header = request.headers.get('authorization') or request.headers.get('Authorization')
+    if auth_header:
+        headers['Authorization'] = auth_header
+
+    try:
+        response = requests.post(endpoint, json=payload, headers=headers, timeout=timeout_s)
+        response.raise_for_status()
+        log.info('Successfully forwarded file ingestion payload to Neo4j graph tool.')
+    except requests.RequestException as e:
+        log.error(f'Error posting file ingestion to Neo4j graph tool: {e}')
+    except Exception as e:
+        log.error(f'Unexpected error during Neo4j graph ingestion: {e}')
 
 
 @router.post('/process/file')
@@ -1679,6 +1731,14 @@ async def process_file(
                 db=db,
             )
             hash = calculate_sha256_string(text_content)
+
+            _push_to_neo4j_graph_if_configured(
+                request,
+                file.filename,
+                hash,
+                text_content,
+                form_data.chat_id,
+            )
 
             if request.app.state.config.BYPASS_EMBEDDING_AND_RETRIEVAL:
                 await Files.update_file_data_by_id(file.id, {'status': 'completed'}, db=db)

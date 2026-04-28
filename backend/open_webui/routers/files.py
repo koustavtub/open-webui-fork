@@ -123,13 +123,23 @@ async def process_uploaded_file(
             if content_type:
                 stt_supported_content_types = getattr(request.app.state.config, 'STT_SUPPORTED_CONTENT_TYPES', [])
 
+                chat_id_upload = (
+                    str(file_metadata.get('chat_id'))
+                    if file_metadata and file_metadata.get('chat_id') is not None
+                    else None
+                )
+
                 if strict_match_mime_type(stt_supported_content_types, content_type):
                     file_path_processed = await asyncio.to_thread(Storage.get_file, file_path)
                     result = transcribe(request, file_path_processed, file_metadata, user)
 
                     await process_file(
                         request,
-                        ProcessFileForm(file_id=file_item.id, content=result.get('text', '')),
+                        ProcessFileForm(
+                            file_id=file_item.id,
+                            content=result.get('text', ''),
+                            chat_id=chat_id_upload,
+                        ),
                         user=user,
                         db=db_session,
                     )
@@ -138,7 +148,7 @@ async def process_uploaded_file(
                 ):
                     await process_file(
                         request,
-                        ProcessFileForm(file_id=file_item.id),
+                        ProcessFileForm(file_id=file_item.id, chat_id=chat_id_upload),
                         user=user,
                         db=db_session,
                     )
@@ -146,9 +156,14 @@ async def process_uploaded_file(
                     raise Exception(f'File type {content_type} is not supported for processing')
             else:
                 log.info(f'File type {file.content_type} is not provided, but trying to process anyway')
+                chat_id_upload = (
+                    str(file_metadata.get('chat_id'))
+                    if file_metadata and file_metadata.get('chat_id') is not None
+                    else None
+                )
                 await process_file(
                     request,
-                    ProcessFileForm(file_id=file_item.id),
+                    ProcessFileForm(file_id=file_item.id, chat_id=chat_id_upload),
                     user=user,
                     db=db_session,
                 )

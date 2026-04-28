@@ -148,6 +148,9 @@
 
 	export let chatTasks = [];
 
+	/** When set, sent as `chat_id` in upload `metadata` for downstream graph/RAG hooks. */
+	export let chatId: string | null = null;
+
 	let inputContent = null;
 
 	let showInputVariablesModal = false;
@@ -622,7 +625,7 @@
 		if (!$temporaryChatEnabled) {
 			try {
 				// If the file is an audio file, provide the language for STT.
-				let metadata = null;
+				let metadata: Record<string, unknown> | null = null;
 				if (
 					(file.type.startsWith('audio/') || file.type.startsWith('video/')) &&
 					$settings?.audio?.stt?.language
@@ -630,6 +633,9 @@
 					metadata = {
 						language: $settings?.audio?.stt?.language
 					};
+				}
+				if (chatId) {
+					metadata = { ...(metadata ?? {}), chat_id: chatId };
 				}
 
 				// During the file upload, file content is automatically extracted.
